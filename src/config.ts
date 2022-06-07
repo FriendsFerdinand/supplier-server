@@ -55,7 +55,7 @@ export function getContractAddress() {
     case 'mainnet':
       throw new Error('No known contract address for mainnet');
     case 'testnet':
-      return defaultAddress || 'ST2WBR71TSWP5S3WZYFC3VERBS3P134FB69QJXSFJ';
+      return defaultAddress || 'ST24EA7AG3068VF6X0ZB68CQ2HNEJWPZN6MXGZTBM';
     default:
       throw new Error(`Invalid OPERATOR_NETWORK: ${networkKey}`);
   }
