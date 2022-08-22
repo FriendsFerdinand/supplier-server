@@ -3964,35 +3964,42 @@ export const contracts = {
   },
 } as const;
 
+const tempContract = "ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A";
+
 export const deployments = {
   restrictedTokenTrait: {
     devnet: 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.restricted-token-trait',
     simnet: 'SP3DX3H4FEYZJZ586MFBS25ZW3HZDMEW92260R2PR.restricted-token-trait',
-    testnet: 'ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A.restricted-token-trait',
+    // testnet: 'ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A.restricted-token-trait',
+    testnet: `${tempContract}.restricted-token-trait`,
     mainnet: null,
   },
   wrappedBitcoin: {
     devnet: 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.Wrapped-Bitcoin',
     simnet: 'SP3DX3H4FEYZJZ586MFBS25ZW3HZDMEW92260R2PR.Wrapped-Bitcoin',
-    testnet: 'ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A.Wrapped-Bitcoin',
+    // testnet: 'ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A.Wrapped-Bitcoin',
+    testnet: `${tempContract}.xbtc`,
     mainnet: 'SP3DX3H4FEYZJZ586MFBS25ZW3HZDMEW92260R2PR.Wrapped-Bitcoin',
   },
   ftTrait: {
     devnet: 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.ft-trait',
     simnet: 'SP3DX3H4FEYZJZ586MFBS25ZW3HZDMEW92260R2PR.ft-trait',
-    testnet: 'ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A.ft-trait',
+    // testnet: 'ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A.ft-trait',
+    testnet: `${tempContract}.ft-trait`,
     mainnet: null,
   },
   bridge: {
     devnet: 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.bridge',
     simnet: 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.bridge',
-    testnet: 'ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A.bridge',
+    // testnet: 'ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A.bridge',
+    testnet: `${tempContract}.bridge`,
     mainnet: 'SP3NHG9CBN9SPH68HD8HGPS7F7499KCAEC9K20NZZ.bridge',
   },
   clarityBitcoin: {
     devnet: 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.clarity-bitcoin',
     simnet: 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.clarity-bitcoin',
-    testnet: 'ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A.clarity-bitcoin',
+    // testnet: 'ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A.clarity-bitcoin',
+    testnet: `${tempContract}.clarity-bitcoin`,
     mainnet: 'SP3NHG9CBN9SPH68HD8HGPS7F7499KCAEC9K20NZZ.clarity-bitcoin',
   },
   supplierWrapper: {
