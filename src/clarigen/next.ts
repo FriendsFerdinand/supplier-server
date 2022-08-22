@@ -3964,7 +3964,7 @@ export const contracts = {
   },
 } as const;
 
-const tempContract = "ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A";
+const tempContract = "STE81YFK7JCN0EK00YZ13QPA2YFJMEWW7WFG2YHB";
 
 export const deployments = {
   restrictedTokenTrait: {
@@ -3978,14 +3978,14 @@ export const deployments = {
     devnet: 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.Wrapped-Bitcoin',
     simnet: 'SP3DX3H4FEYZJZ586MFBS25ZW3HZDMEW92260R2PR.Wrapped-Bitcoin',
     // testnet: 'ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A.Wrapped-Bitcoin',
-    testnet: `${tempContract}.xbtc`,
+    testnet: `${tempContract}.Wrapped-Bitcoin`,
     mainnet: 'SP3DX3H4FEYZJZ586MFBS25ZW3HZDMEW92260R2PR.Wrapped-Bitcoin',
   },
   ftTrait: {
     devnet: 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.ft-trait',
     simnet: 'SP3DX3H4FEYZJZ586MFBS25ZW3HZDMEW92260R2PR.ft-trait',
-    // testnet: 'ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A.ft-trait',
-    testnet: `${tempContract}.ft-trait`,
+    testnet: 'ST19F1KWRKRF2BZMPW7MWV463K11WED2M39X1HR3A.ft-trait',
+    // testnet: `${tempContract}.ft-trait`,
     mainnet: null,
   },
   bridge: {
