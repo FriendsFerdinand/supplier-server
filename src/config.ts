@@ -1,25 +1,26 @@
 import { ECPair, networks, payments } from 'bitcoinjs-lib';
-import { privateKeyToStxAddress, StacksNetworkVersion } from 'micro-stacks/crypto';
+import { StacksNetworkVersion } from 'micro-stacks/crypto';
 import { StacksMainnet, StacksMocknet, StacksNetwork, StacksTestnet } from 'micro-stacks/network';
 import { getPublicKey as _getPublicKey } from 'noble-secp256k1';
-import { accounts } from '../src/clarigen';
 import { logger } from './logger';
+import { bridgeContract, stacksProvider } from './stacks';
 import { makeStxAddress } from './utils';
 
 export function getEnv(key: string) {
-  const value = process.env[key];
+  const oldKey = key.replace(/^SUPPLIER/, 'OPERATOR');
+  const value = process.env[oldKey] || process.env[key];
   if (!value) throw new Error(`Missing required ENV variable: ${key}`);
   return value;
 }
 
 export function getBtcSigner() {
   const network = getBtcNetwork();
-  return ECPair.fromWIF(getEnv('OPERATOR_BTC_KEY'), network);
+  return ECPair.fromWIF(getEnv('SUPPLIER_BTC_KEY'), network);
 }
 
 export function getBtcPrivateKey() {
   const signer = getBtcSigner();
-  if (!signer.privateKey) throw new Error('Invalid private key in OPERATOR_BTC_KEY');
+  if (!signer.privateKey) throw new Error('Invalid private key in SUPPLIER_BTC_KEY');
   return signer.privateKey;
 }
 
@@ -28,10 +29,14 @@ export function getPublicKey() {
   return signer.publicKey;
 }
 
-export function getOperatorId() {
-  const id = parseInt(getEnv('OPERATOR_ID'), 10);
-  if (isNaN(id)) throw new Error('OPERATOR_ID is not a number');
+export function getSupplierId() {
+  const id = parseInt(getEnv('SUPPLIER_ID'), 10);
+  if (isNaN(id)) throw new Error('SUPPLIER_ID is not a number');
   return id;
+}
+
+export function hasSupplierId() {
+  return typeof process.env.SUPPLIER_ID !== 'undefined';
 }
 
 export function getBtcPayment() {
@@ -46,23 +51,8 @@ export function getBtcAddress() {
   return address;
 }
 
-export function getContractAddress() {
-  const networkKey = getNetworkKey();
-  const defaultAddress = process.env.CONTRACT_ADDRESS;
-  switch (networkKey) {
-    case 'mocknet':
-      return accounts.deployer.address;
-    case 'mainnet':
-      throw new Error('No known contract address for mainnet');
-    case 'testnet':
-      return defaultAddress || 'ST24EA7AG3068VF6X0ZB68CQ2HNEJWPZN6MXGZTBM';
-    default:
-      throw new Error(`Invalid OPERATOR_NETWORK: ${networkKey}`);
-  }
-}
-
 export function getStxPrivateKey() {
-  return getEnv('OPERATOR_STX_KEY');
+  return getEnv('SUPPLIER_STX_KEY');
 }
 
 export function getStxNetworkVersion() {
@@ -79,7 +69,7 @@ export function getStxAddress() {
 }
 
 export function getNetworkKey() {
-  return getEnv('OPERATOR_NETWORK');
+  return getEnv('SUPPLIER_NETWORK');
 }
 
 export function validateKeys() {
@@ -95,23 +85,15 @@ export function validateConfig() {
   const keys = validateKeys();
   return {
     ...keys,
-    operatorId: getOperatorId(),
+    operatorId: getSupplierId(),
   };
 }
 
 export type PublicConfig = ReturnType<typeof validateConfig>;
 
 export function logConfig(config: Record<string, string | number>) {
-  const message: string[] = ['Server config:'];
-  let k: keyof typeof config;
   const electrumConfig = getElectrumConfig();
-  for (k in config) {
-    message.push(`${k}: ${config[k]}`);
-  }
-  message.push(`Electrum host: ${electrumConfig.host}`);
-  message.push(`Electrum port: ${electrumConfig.port}`);
-  message.push(`Electrum protocol: ${electrumConfig.protocol}`);
-  logger.debug(message.join('\n'));
+  logger.debug({ ...config, electrumConfig, topic: 'start' }, 'Server config:');
 }
 
 export function getBtcNetwork(): networks.Network {
@@ -124,7 +106,7 @@ export function getBtcNetwork(): networks.Network {
     case 'testnet':
       return networks.testnet;
     default:
-      throw new Error(`Invalid OPERATOR_NETWORK: ${networkKey}`);
+      throw new Error(`Invalid SUPPLIER_NETWORK: ${networkKey}`);
   }
 }
 
@@ -138,7 +120,7 @@ export function getStxNetwork(): StacksNetwork {
     case 'testnet':
       return new StacksTestnet();
     default:
-      throw new Error(`Invalid OPERATOR_NETWORK: ${networkKey}`);
+      throw new Error(`Invalid SUPPLIER_NETWORK: ${networkKey}`);
   }
 }
 
@@ -162,6 +144,12 @@ export function getElectrumConfig() {
         port: 50001,
         protocol: 'tcp',
       };
+    case 'mainnet':
+      return {
+        host: 'fortress.qtornado.com',
+        port: 443,
+        protocol: 'ssl',
+      };
     default:
       return {
         host: process.env.ELECTRUM_HOST || 'localhost',
@@ -169,4 +157,32 @@ export function getElectrumConfig() {
         protocol: process.env.ELECTRUM_PROTOCOL || 'ssl',
       };
   }
+}
+
+export async function validateKeysMatch() {
+  const stxAddress = getStxAddress();
+  const btcAddress = getBtcAddress();
+  let id: number;
+  try {
+    id = getSupplierId();
+  } catch (error) {
+    throw new Error('Cannot validate keys match: no supplier id');
+  }
+
+  const provider = stacksProvider();
+  const supplier = await provider.ro(bridgeContract().getSupplier(id));
+  if (supplier === null) throw new Error(`Invalid config: no supplier with id ${id}`);
+
+  if (supplier.controller !== stxAddress) {
+    throw new Error(`STX key invalid: expected ${supplier.controller} to equal ${stxAddress}`);
+  }
+
+  const supplierBtc = payments.p2pkh({
+    pubkey: Buffer.from(supplier.publicKey),
+    network: getBtcNetwork(),
+  }).address!;
+  if (supplierBtc !== btcAddress) {
+    throw new Error(`BTC key invalid: expected ${supplierBtc} to equal ${btcAddress}`);
+  }
+  return true;
 }

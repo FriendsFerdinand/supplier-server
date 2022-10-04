@@ -1,17 +1,21 @@
 import { prompt } from 'inquirer';
 import 'cross-fetch/polyfill';
 import { stacksProvider, bridgeContract } from '../src/stacks';
-import { bpsToPercent, satsToBtc, shiftInt } from '../src/utils';
+import { bpsToPercent, btcToSats, satsToBtc, shiftInt, stxToUstx } from '../src/utils';
 import {
-  getContractAddress,
+  getBtcAddress,
+  getNetworkKey,
   getPublicKey,
   getStxAddress,
   getStxNetwork,
-  validateConfig,
   validateKeys,
 } from '../src/config';
 import { PostConditionMode } from 'micro-stacks/transactions';
-import { fetchAccountBalances } from 'micro-stacks/api';
+import BigNumber from 'bignumber.js';
+import { getBalances } from '../src/wallet';
+import { AnchorMode } from 'micro-stacks/transactions';
+import { bytesToHex } from 'micro-stacks/common';
+import { askStxFee, broadcastAndLog } from './helpers';
 
 interface Answers {
   inboundFee: number;
@@ -20,6 +24,7 @@ interface Answers {
   outboundBaseFee: number;
   xbtcFunds: number;
   name: string;
+  stxFee: number;
 }
 
 async function run() {
@@ -35,21 +40,22 @@ async function run() {
   }
 
   const stxAddress = getStxAddress();
+  const btcAddress = getBtcAddress();
+  const balances = await getBalances();
   const network = getStxNetwork();
-  const contractAddress = getContractAddress();
-  const balances = await fetchAccountBalances({
-    url: network.getCoreApiUrl(),
-    principal: stxAddress,
-  });
+  const networkKey = getNetworkKey();
 
-  const xbtcId = `${contractAddress}.xbtc::xbtc`;
-  const stxBalance = shiftInt(balances.stx.balance, -6);
-  const xbtcBalanceSats = balances.fungible_tokens[xbtcId]?.balance || '0';
-  const xbtcBalance = satsToBtc(xbtcBalanceSats);
+  const stxBalance = balances.stx.stx;
+  const xbtcBalance = balances.stx.xbtc;
+  const btcBalance = balances.btc.btc;
 
   console.log(`STX Address: ${stxAddress}`);
-  console.log(`STX Balance: ${stxBalance.toFormat()} STX`);
+  console.log(`BTC Address: ${btcAddress}`);
+  console.log(`STX Balance: ${stxBalance} STX`);
   console.log(`xBTC Balance: ${xbtcBalance} xBTC`);
+  console.log(`BTC Balance: ${btcBalance} BTC`);
+  console.log(`Network: ${networkKey}`);
+  console.log(`Stacks node: ${network.getCoreApiUrl()}`);
 
   const answers = await prompt<Answers>([
     { name: 'inboundFee', message: 'Inbound fee (basis points)', type: 'number', default: '10' },
@@ -68,21 +74,20 @@ async function run() {
     },
     {
       name: 'xbtcFunds',
-      message: `How much xBTC do you want to supply (in satoshis)? Max: ${xbtcBalanceSats}`,
+      message: `How much xBTC do you want to supply (in xBTC)? Max: ${xbtcBalance}`,
       type: 'number',
     },
-    {
-      name: 'name',
-      message: 'Your supplier name (registered publicly in the Magic contract)',
-    },
   ]);
+
+  const { stxFee, ustxFee: fee } = await askStxFee(stxBalance);
 
   const inboundFee = BigInt(answers.inboundFee);
   const inboundBaseFee = BigInt(answers.inboundBaseFee);
   const outboundFee = BigInt(answers.outboundFee);
   const outboundBaseFee = BigInt(answers.outboundBaseFee);
-  const xbtcFunds = BigInt(answers.xbtcFunds);
-  const { name } = answers;
+  // const xbtcFunds = BigInt(answers.xbtcFunds);
+  const xbtcFunds = new BigNumber(answers.xbtcFunds).decimalPlaces(8);
+  const xbtcFundsSats = btcToSats(xbtcFunds.toString());
 
   console.log(`Inbound fee: ${inboundFee} bips (${bpsToPercent(inboundFee)}%)`);
   console.log(`Inbound base fee: ${inboundBaseFee} sats (${satsToBtc(inboundBaseFee)} BTC)`);
@@ -90,9 +95,9 @@ async function run() {
   console.log(`Outbound fee: ${outboundFee} bips (${bpsToPercent(outboundFee)}%)`);
   console.log(`Outbound base fee: ${outboundBaseFee} sats (${satsToBtc(outboundBaseFee)} BTC)`);
 
-  console.log(`xBTC funds: ${xbtcFunds} sats (${satsToBtc(xbtcFunds)} xBTC)`);
+  console.log(`xBTC funds: ${xbtcFunds.toFormat()} xBTC (${xbtcFundsSats} sats)`);
 
-  console.log(`Name: ${name}`);
+  console.log(`Transaction fee: ${stxFee} STX (${fee} uSTX)`);
 
   const { ok } = await prompt<{ ok: boolean }>([
     { name: 'ok', type: 'confirm', message: 'Please confirm the above information is correct' },
@@ -107,12 +112,13 @@ async function run() {
     outboundFee,
     outboundBaseFee,
     inboundBaseFee,
-    name,
-    xbtcFunds
+    BigInt(xbtcFundsSats)
   );
 
-  const { txId } = await provider.tx(registerTx, { postConditionMode: PostConditionMode.Allow });
-  console.log('TXID:', txId);
+  await broadcastAndLog(registerTx, {
+    postConditionMode: PostConditionMode.Allow,
+    fee,
+  });
 }
 
 run()

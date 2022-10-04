@@ -6,6 +6,11 @@ declare module 'electrum-client-sl' {
     value: number;
   }
 
+  export interface Balance {
+    confirmed: number;
+    unconfirmed: number;
+  }
+
   export default class ElectronClient {
     constructor(host: string, port: number, protocol: string);
     blockchain_transaction_getMerkle(
@@ -56,6 +61,7 @@ declare module 'electrum-client-sl' {
           reqSigs: number;
           type: 'scripthash';
           addresses: string[];
+          address: string;
         };
       }[];
     }>;
@@ -64,5 +70,9 @@ declare module 'electrum-client-sl' {
     blockchain_scripthash_listunspent(scriptHash: string): Promise<Unspent[]>;
 
     blockchain_transaction_broadcast(txHex: string): Promise<string>;
+
+    blockchain_scripthash_getBalance(scriptHash: string): Promise<Balance>;
+
+    blockchainEstimatefee(blocks: number): Promise<number>;
   }
 }

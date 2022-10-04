@@ -1,0 +1,53 @@
+services:
+  - type: redis
+    name: supplier-server-redis
+    plan: starter
+    ipAllowList: []
+
+  - type: web
+    name: supplier-server-web
+    env: node
+    buildCommand: 'yarn'
+    startCommand: 'yarn server'
+    autoDeploy: false
+    envVars:
+      - fromGroup: nodejs
+      - key: REDIS_URL
+        fromService:
+          name: supplier-server-redis
+          type: redis
+          property: connectionString
+      - key: SUPPLIER_SERVICE_TYPE
+        value: monitor
+      - key: WEB_UI_PASSWORD
+        sync: false
+
+  - type: worker
+    name: supplier-server-worker
+    env: node
+    buildCommand: 'yarn'
+    startCommand: 'yarn worker'
+    autoDeploy: false
+    envVars:
+      - fromGroup: nodejs
+      - key: REDIS_URL
+        fromService:
+          name: supplier-server-redis
+          type: redis
+          property: connectionString
+      - key: SUPPLIER_STX_KEY
+        sync: false
+      - key: SUPPLIER_BTC_KEY
+        sync: false
+      - key: SUPPLIER_ID
+        sync: false
+      - key: SUPPLIER_SERVICE_TYPE
+        value: worker
+      - key: SUPPLIER_NETWORK
+        sync: false
+
+envVarGroups:
+  - name: nodejs
+    envVars:
+      - key: SUPPLIER_NETWORK
+        sync: false

@@ -2,6 +2,7 @@ import { privateKeyToStxAddress, StacksNetworkVersion } from 'micro-stacks/crypt
 import { hashSha256 } from 'micro-stacks/crypto-sha';
 import BigNumber from 'bignumber.js';
 import { IntegerType } from 'micro-stacks/common';
+import { getNetworkKey, getStxNetwork } from './config';
 
 export function reverseBuffer(buffer: Buffer): Buffer {
   if (buffer.length < 1) return buffer;
@@ -31,7 +32,7 @@ export function getCompressedKey(key: string) {
       isCompressed: compressed === '01',
     };
   }
-  return { key, isCompressed: true };
+  return { key, isCompressed: false };
 }
 
 export function makeStxAddress(privateKey: string, networkVersion: StacksNetworkVersion): string {
@@ -56,6 +57,38 @@ export function satsToBtc(sats: IntegerType, minDecimals?: number) {
   return rounded.length > normal.length ? rounded : normal;
 }
 
+export function btcToSats(btc: IntegerType) {
+  return new BigNumber(intToString(btc)).shiftedBy(8).decimalPlaces(0).toString();
+}
+
 export function shiftInt(int: IntegerType, shift: number) {
   return new BigNumber(intToString(int)).shiftedBy(shift);
+}
+
+export function stxToUstx(stx: IntegerType) {
+  return shiftInt(stx, 6).decimalPlaces(0);
+}
+
+// Add 0x to beginning of txid
+export function getTxId(txId: string) {
+  return txId.startsWith('0x') ? txId : `0x${txId}`;
+}
+
+export function getTxUrl(txId: string) {
+  const coreUrl = getStxNetwork().getCoreApiUrl();
+  const id = getTxId(txId);
+  if (coreUrl.includes('http://localhost')) {
+    return `http://localhost:8000/txid/${id}`;
+  }
+  const network = coreUrl.includes('testnet') ? 'testnet' : 'mainnet';
+  return `https://explorer.stacks.co/txid/${id}?chain=${network}`;
+}
+
+export function getBtcTxUrl(txId: string) {
+  const network = getNetworkKey();
+  if (network === 'mocknet') {
+    return `http://localhost:8001/tx/${txId}`;
+  }
+  const base = `https://mempool.space/`;
+  return `${base}${network === 'mainnet' ? '' : 'testnet/'}tx/${txId}`;
 }

@@ -1,38 +1,43 @@
 import ElectrumClient from 'electrum-client-sl';
-import { confirmationsToHeight, findStacksBlockAtHeight, getStacksBlock } from '../stacks-api';
-import { BridgeContract } from '../clarigen';
-import { reverseBuffer } from '../utils';
+import { fetchCoreInfo, findStacksBlockAtHeight, getTransaction } from '../stacks-api';
+import { getBtcTxUrl, reverseBuffer } from '../utils';
 import { getStxAddress } from '../config';
 import { logger } from '../logger';
-import { bridgeContract, stacksProvider } from '../stacks';
+import {
+  bridgeContract,
+  stacksProvider,
+  BridgeContract,
+  getOutboundSwap,
+  getOutboundFinalizedTxid,
+} from '../stacks';
 import {
   RedisClient,
   getAllPendingFinalizedOutbound,
   removePendingFinalizedOutbound,
   setFinalizedOutbound,
+  getFinalizedOutbound,
 } from '../store';
 import { withElectrumClient } from '../wallet';
 import { fetchAccountNonce } from '../stacks-api';
 import { hexToBytes } from 'micro-stacks/common';
+import { ExtractArgs } from '@clarigen/core';
 
-type MintParams = Parameters<BridgeContract['escrowSwap']>;
+type MintParams = ExtractArgs<BridgeContract['functions']['escrowSwap']>;
 type BlockParam = MintParams[0];
 type ProofParam = MintParams[3];
 
 async function txData(client: ElectrumClient, txid: string) {
-  const tx = await client.blockchain_transaction_get(txid, true);
+  const [tx, nodeInfo] = await Promise.all([
+    client.blockchain_transaction_get(txid, true),
+    fetchCoreInfo(),
+  ]);
+  const burnHeight = nodeInfo.burn_block_height - tx.confirmations + 1;
 
-  const burnHeight = await confirmationsToHeight(tx.confirmations);
   const { header, stacksHeight, prevBlocks } = await findStacksBlockAtHeight(
     burnHeight,
     [],
     client
   );
-
-  const blockHash = tx.blockhash;
-
-  // const { burnHeight, stacksHeight } = await getStacksBlock(blockHash);
-  // const header = await client.blockchain_block_header(burnHeight);
 
   const merkle = await client.blockchain_transaction_getMerkle(txid, burnHeight);
   const hashes = merkle.merkle.map(hash => {
@@ -48,8 +53,8 @@ async function txData(client: ElectrumClient, txid: string) {
 
   const proofArg: ProofParam = {
     hashes: hashes,
-    'tx-index': BigInt(merkle.pos),
-    'tree-depth': BigInt(hashes.length),
+    txIndex: BigInt(merkle.pos),
+    treeDepth: BigInt(hashes.length),
   };
 
   return {
@@ -59,6 +64,82 @@ async function txData(client: ElectrumClient, txid: string) {
     tx: txHex,
     prevBlocks: prevBlocks.map(b => hexToBytes(b)),
   };
+}
+
+/**
+ * Check if we should submit a finalization transaction for a swap.
+ *
+ * If there is a pending STX transaction, check the status of it:
+ *   - pending: dont finalize
+ *   - success: dont finalize, remove pending finalization from store
+ *   - failed: retry finalize
+ *
+ * If there is no pending tx (this is first attempt), submit one
+ *
+ * @param swapId swap ID
+ * @param txid btc TXID
+ * @returns whether or not to submit a finalization tx
+ */
+export async function checkShouldFinalize(
+  client: RedisClient,
+  swapId: bigint,
+  txid: string
+): Promise<boolean> {
+  const stxTxid = await getFinalizedOutbound(client, swapId);
+  if (stxTxid === null) {
+    return true;
+  }
+  const swap = await getOutboundSwap(swapId);
+
+  const log = logger.child({
+    topic: 'finalizeOutboundError',
+    swapId,
+    stxTxid,
+    txid,
+  });
+
+  if (swap === null) {
+    await removePendingFinalizedOutbound(client, swapId, txid);
+    log.fatal('Trying to finalize non-existant swap');
+    return false;
+  }
+
+  const stxTx = await getTransaction(stxTxid);
+  const { tx_status } = stxTx;
+  switch (tx_status) {
+    case 'pending': {
+      return false;
+    }
+    case 'success': {
+      log.info({ finalizeOutboundState: 'success' });
+      await removePendingFinalizedOutbound(client, swapId, txid);
+      return false;
+    }
+  }
+
+  // Failed - should we try again? (yes until revoked)
+
+  const finalizeTxid = await getOutboundFinalizedTxid(swapId);
+  if (finalizeTxid !== null) {
+    // This swap was already finalized (either successfully or as a revocation)
+    await removePendingFinalizedOutbound(client, swapId, txid);
+    if (finalizeTxid === '00') {
+      // revoked
+      log.error({ finalizeOutboundState: 'revoked' }, 'Outbound swap was revoked');
+    } else {
+      log.info({ finalizeOutboundState: 'success' }, 'Swap already finalized');
+    }
+    return false;
+  }
+
+  log.error(
+    {
+      tx_status,
+      finalizeOutboundState: 'failed',
+    },
+    'Outbound finalize transaction failed'
+  );
+  return true;
 }
 
 export async function finalizeOutbound({
@@ -71,8 +152,18 @@ export async function finalizeOutbound({
   nonce: number;
 }) {
   const [idStr, txid] = key.split('::');
-  logger.debug(`Finalizing outbound ${key}`);
   const id = BigInt(idStr);
+  const shouldFinalize = await checkShouldFinalize(client, id, txid);
+  if (!shouldFinalize) {
+    return false;
+  }
+  const log = logger.child({
+    topic: 'finalizeOutboundSwap',
+    swapId: id,
+    btcTxid: txid,
+    btcTx: getBtcTxUrl(txid),
+  });
+  log.info(`Finalizing outbound ${key}`);
   const provider = stacksProvider();
   const bridge = bridgeContract();
   try {
@@ -89,37 +180,43 @@ export async function finalizeOutbound({
       const receipt = await provider.tx(finalizeTx, { nonce });
       return receipt.txId;
     });
-    logger.debug(`Submitted finalize outbound Stacks tx: ${stxTxid}`);
-    await removePendingFinalizedOutbound(client, id, txid);
+    log.debug({ stxTxid }, `Submitted finalize outbound Stacks tx: ${stxTxid}`);
     await setFinalizedOutbound(client, id, stxTxid);
+    return true;
   } catch (error) {
-    // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-    logger.error(`Error when finalizing outbound for ID ${idStr}: ${error}`);
+    if (String(error) === 'Invalid height') {
+      log.debug(`Cannot finalize outbound ${idStr}: no stacks block.`);
+    } else {
+      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+      log.error(`Error when finalizing outbound for ID ${idStr}: ${error}`);
+    }
+    return false;
   }
 }
 
 export async function processPendingOutbounds(client: RedisClient) {
   const members = await getAllPendingFinalizedOutbound(client);
   if (members.length === 0) {
-    return true;
+    return { finalized: 0 };
   }
-  logger.debug('Pending finalized outbounds:');
-  logger.debug(members);
+  logger.debug({ topic: 'pendingOutbound', txids: members }, 'Pending finalized outbounds');
   const nonce = await fetchAccountNonce(getStxAddress());
   // serially to not have conflicting nonces
   let processed = 0;
   for (let i = 0; i < members.length; i++) {
     const key = members[i];
     try {
-      await finalizeOutbound({
+      const success = await finalizeOutbound({
         client,
         nonce: nonce + processed,
         key,
       });
-      processed += 1;
+      if (success) processed += 1;
     } catch (error) {
       console.error(`Unable to finalize outbound ${key}:`, error);
     }
   }
-  return true;
+  return {
+    finalized: processed,
+  };
 }

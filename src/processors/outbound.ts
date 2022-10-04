@@ -1,34 +1,61 @@
-import { Transaction } from '@stacks/stacks-blockchain-api-types';
 import { networks, payments } from 'bitcoinjs-lib';
-import { deserializeCV, ResponseOkCV, UIntCV } from 'micro-stacks/clarity';
-import { bytesToBigInt, hexToBigInt } from 'micro-stacks/common';
-import { getBtcNetwork } from '../config';
+import { bytesToBigInt, bytesToHex } from 'micro-stacks/common';
+import { getBtcNetwork, getSupplierId } from '../config';
 import {
   getSentOutbound,
   setSentOutbound,
   RedisClient,
   setPendingFinalizedOutbound,
 } from '../store';
-import { logger } from '../logger';
+import { logger as _logger } from '../logger';
 import { sendBtc, withElectrumClient } from '../wallet';
-import { bridgeContract, stacksProvider } from '../stacks';
+import { getBtcTxUrl } from '../utils';
+import { Event, InitiateOutboundPrint, isInitiateOutboundEvent } from '../events';
+import { getOutboundFinalizedTxid } from '../stacks';
+import { fetchCoreInfo } from '../stacks-api';
 
-export async function processOutboundSwap(tx: Transaction, redis: RedisClient) {
-  if (tx.tx_type !== 'contract_call') return;
-  if (tx.contract_call.function_name !== 'initiate-outbound-swap') return;
-  if (!tx.contract_call.function_args) return;
-  if (tx.tx_status !== 'success') return;
-  const result = deserializeCV<ResponseOkCV<UIntCV>>(tx.tx_result.hex);
-  const swapId = result.value.value;
-  const sent = await getSentOutbound(redis, swapId);
-  if (sent) {
-    logger.info(`Already sent outbound swap ${swapId} in ${sent}.`);
-    return;
+const logger = _logger.child({ topic: 'sendOutbound' });
+
+export async function shouldSendOutbound(event: Event<InitiateOutboundPrint>, redis: RedisClient) {
+  const { print } = event;
+  if (print.supplier !== BigInt(getSupplierId())) return false;
+  const swapId = print.swapId;
+  const cached = await getSentOutbound(redis, swapId);
+  const finalized = await getOutboundFinalizedTxid(swapId);
+  const txid = cached || finalized;
+  if (txid) {
+    logger.info(`Already sent outbound swap ${swapId} in ${txid}.`);
+    return false;
   }
-  const sentTxid = await sendOutbound(swapId);
+  const currentBlock = (await fetchCoreInfo()).burn_block_height;
+  // is it about to expire?
+  if (currentBlock - Number(print.createdAt) >= 190) {
+    logger.error('Outbound swap expired - not sending');
+    return false;
+  }
+  return true;
+}
+
+export async function processOutboundSwap(event: Event, redis: RedisClient) {
+  if (!isInitiateOutboundEvent(event)) return false;
+  if (!(await shouldSendOutbound(event, redis))) {
+    return { skipped: true, swapId: Number(event.print.swapId) };
+  }
+  const { print } = event;
+  const swapId = print.swapId;
+  const swapIdNum = Number(swapId);
+  const sentTxid = await sendOutbound(print);
   await setSentOutbound(redis, swapId, sentTxid);
   await setPendingFinalizedOutbound(redis, swapId, sentTxid);
-  logger.debug(`Sent outbound in txid ${sentTxid}`);
+  logger.info(
+    { swapId: swapIdNum, txid: sentTxid, txUrl: getBtcTxUrl(sentTxid) },
+    `Sent outbound in txid ${sentTxid}`
+  );
+  return {
+    swapId: swapIdNum,
+    txUrl: getBtcTxUrl(sentTxid),
+    sentTxid,
+  };
 }
 
 export function getOutboundPayment(hash: Uint8Array, versionBytes: Uint8Array) {
@@ -41,20 +68,21 @@ export function getOutboundPayment(hash: Uint8Array, versionBytes: Uint8Array) {
   }
 }
 
-export async function sendOutbound(swapId: bigint) {
-  const bridge = bridgeContract();
-  const provider = stacksProvider();
-  const swap = await provider.ro(bridge.getOutboundSwap(swapId));
-  if (!swap) throw new Error(`Expected outbound swap ${swapId} to exist.`);
-  const { address } = getOutboundPayment(swap.hash, swap.version);
+export async function sendOutbound(event: InitiateOutboundPrint) {
+  const swapId = event.swapId;
+  const { address } = getOutboundPayment(event.hash, event.version);
   if (!address) throw new Error(`Unable to get outbound address for swap ${swapId}`);
-  const amount = swap.sats;
-  logger.debug(`Sending ${amount} sats to ${address}`);
+  const amount = event.sats;
+  logger.debug(
+    { topic: 'sendOutbound', swapId: Number(swapId), recipient: address },
+    `Sending ${amount} sats to ${address}`
+  );
   const txid = await withElectrumClient(async client => {
     const tx = await sendBtc({
       client,
       recipient: address,
       amount,
+      maxSize: 1024,
     });
     const txid = tx.getId();
     return txid;

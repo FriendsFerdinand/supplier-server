@@ -3,7 +3,7 @@ import { getNetworkKey } from './config';
 export type { Redis as RedisClient } from 'ioredis';
 
 export enum RedisKeys {
-  LastSeenTxid = 'LastSeenTxidV2',
+  LastSeenTxid = 'LastSeenTxidV3',
   RedeemedHTLC = 'RedeemedHTLC',
   SentOutbound = 'SentOutbound',
   FinalizedOutbound = 'FinalizedOutbound',
@@ -15,12 +15,32 @@ export function redisKeyPrefix() {
   return `swapy-${network}`;
 }
 
-export function createRedisClient() {
+export function workerKeyPrefix() {
+  const network = getNetworkKey();
+  return `supplier-worker-${network}`;
+}
+
+export function getRedisUrl() {
   const url = process.env.REDIS_URL || process.env.REDISTOGO_URL;
-  const family = process.env.REDIS_FAMILY ? parseInt(process.env.REDIS_FAMILY, 10) : 4;
+  if (typeof url === 'undefined') {
+    return 'redis://127.0.0.1:6379';
+  }
+  return url;
+}
+
+export function createRedisClient() {
+  const url = getRedisUrl();
   const keyPrefix = redisKeyPrefix();
-  const client = new Redis(url, { keyPrefix, family });
+  const client = new Redis(url, { keyPrefix });
   return client;
+}
+
+export function createWorkerRedisClient() {
+  const url = getRedisUrl();
+  return new Redis(url, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+  });
 }
 
 export async function getLastSeenTxid(client: RedisClient) {
@@ -103,7 +123,7 @@ export async function removeAll(client: RedisClient) {
 
 // helpers
 
-export async function getAllKeys(client: RedisClient): Promise<string[]> {
+export async function getAllKeys(client: RedisClient, withPrefix = false): Promise<string[]> {
   const keyPrefix = redisKeyPrefix();
   return new Promise(resolve => {
     const keys: string[] = [];
@@ -111,8 +131,12 @@ export async function getAllKeys(client: RedisClient): Promise<string[]> {
       count: 1000,
     });
     stream.on('data', (res: string[]) => {
-      const fixedKeys = res.map(key => key.slice(keyPrefix.length));
-      keys.push(...fixedKeys);
+      if (withPrefix) {
+        keys.push(...res);
+      } else {
+        const fixedKeys = res.map(key => key.slice(keyPrefix.length));
+        keys.push(...fixedKeys);
+      }
     });
     stream.on('end', () => {
       resolve(keys);
@@ -120,8 +144,8 @@ export async function getAllKeys(client: RedisClient): Promise<string[]> {
   });
 }
 
-export async function getAllKeysAndValues(client: RedisClient) {
-  const keys = await getAllKeys(client);
+export async function getAllKeysAndValues(client: RedisClient, withPrefix = false) {
+  const keys = await getAllKeys(client, withPrefix);
   const values = await client.mget(keys);
   const combined: [string, string | null][] = [];
   for (let i = 0; i < keys.length; i++) {

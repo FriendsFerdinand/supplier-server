@@ -1,40 +1,50 @@
-import { getBtcAddress, getBtcSigner, getOperatorId } from '../config';
+import { getBtcAddress, getBtcSigner, getSupplierId } from '../config';
 import { networks, Psbt, script as bScript, payments, opcodes } from 'bitcoinjs-lib';
-import { Transaction } from '@stacks/stacks-blockchain-api-types';
-import BigNumber from 'bignumber.js';
 import { getRedeemedHTLC, setRedeemedHTLC, RedisClient } from '../store';
-import { logger } from '../logger';
-import { tryBroadcast, withElectrumClient } from '../wallet';
+import { logger as _logger } from '../logger';
+import { getFeeRate, tryBroadcast, withElectrumClient } from '../wallet';
 import { bridgeContract, stacksProvider } from '../stacks';
-import { hexToBytes } from 'micro-stacks/common';
+import { bytesToHex, hexToBytes } from 'micro-stacks/common';
+import { getBtcTxUrl, satsToBtc } from '../utils';
+import { Event, isFinalizeInboundPrint } from '../events';
 
-export async function processFinalizedInbound(tx: Transaction, client: RedisClient) {
-  if (tx.tx_type !== 'contract_call') return;
-  if (tx.contract_call.function_name !== 'finalize-swap') return;
-  if (!tx.contract_call.function_args) return;
-  if (tx.tx_status !== 'success') return;
+const logger = _logger.child({ topic: 'redeemHTLC' });
+
+export async function processFinalizedInbound(event: Event, client: RedisClient) {
+  const { print } = event;
+  if (!isFinalizeInboundPrint(print)) return;
+  const { preimage, supplier } = print;
+  if (print.supplier !== BigInt(getSupplierId())) return;
+  const txidHex = bytesToHex(print.txid);
+  const l = logger.child({
+    txid: txidHex,
+    event: {
+      preimageHex: bytesToHex(preimage),
+      ...print,
+    },
+  });
   try {
-    const txidHex = tx.contract_call.function_args[0].repr.slice(2);
     const redeemed = await getRedeemedHTLC(client, txidHex);
-    logger.debug(`Processing redeem of HTLC txid ${txidHex}`);
+    l.info(`Processing redeem of HTLC txid ${txidHex}`);
     if (redeemed) {
-      logger.debug(`Already redeemed ${txidHex} in ${redeemed}`);
-      return;
+      l.debug(`Already redeemed ${txidHex} in ${redeemed}`);
+      return { skipped: true };
     }
-    logger.info(`Redeeming HTLC ${txidHex}`);
-    const txid = Buffer.from(txidHex, 'hex');
-    const bridge = bridgeContract();
-    const provider = stacksProvider();
-    const swap = await provider.ro(bridge.getInboundSwap(txid));
-    const operatorId = getOperatorId();
-    if (swap?.supplier !== BigInt(operatorId)) return;
-    const preimage = await provider.ro(bridge.getPreimage(txid));
-    if (!preimage) return;
+    if (preimage === null) {
+      l.error('Error redeeming: no preimage');
+      return { error: 'No preimage' };
+    }
     const redeemTxid = await redeem(txidHex, preimage);
     await setRedeemedHTLC(client, txidHex, redeemTxid);
-    return true;
+    return {
+      redeemTxid,
+      amount: satsToBtc(print.xbtc),
+    };
   } catch (error) {
-    console.error('Error redeeming HTLC', error);
+    l.error({ error, errorString: String(error) }, `Error redeeming HTLC: ${String(error)}`);
+    return {
+      error: String(error),
+    };
   }
 }
 
@@ -49,16 +59,15 @@ export async function redeem(txid: string, preimage: Uint8Array) {
     const psbt = new Psbt({ network: networks.regtest });
     const signer = getBtcSigner();
     const address = getBtcAddress();
-    // TODO: dynamic feeRate
     const weight = 312;
-    const feeRate = 1;
+    const feeRate = await getFeeRate(client);
     const fee = weight * feeRate;
 
     psbt.addInput({
       hash: txid,
       index: 0,
       nonWitnessUtxo: txHex,
-      redeemScript: Buffer.from(swap['redeem-script']),
+      redeemScript: Buffer.from(swap.redeemScript),
     });
 
     psbt.addOutput({
@@ -90,6 +99,11 @@ export async function redeem(txid: string, preimage: Uint8Array) {
     const final = psbt.extractTransaction();
     const finalId = final.getId();
     await tryBroadcast(client, final);
+    const btcAmount = satsToBtc(swap.sats);
+    logger.info(
+      { redeemTxid: finalId, txUrl: getBtcTxUrl(finalId), htlcTxid: txid, amount: swap.sats },
+      `Redeemed inbound HTLC for ${btcAmount} BTC`
+    );
     return finalId;
   });
 }

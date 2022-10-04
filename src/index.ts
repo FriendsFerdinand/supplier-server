@@ -1,43 +1,32 @@
 import Fastify from 'fastify';
-import FastifyRedis from 'fastify-redis';
-import fastifySchedulePlugin from 'fastify-schedule';
-import { createRedisClient } from './store';
-import { processRoute } from './routes/process';
-
-import { logConfig, validateConfig } from './config';
+import BasicAuth, { FastifyBasicAuthOptions } from '@fastify/basic-auth';
 import { logger } from './logger';
-import { flushRoute } from './routes/flush';
-import { processJob } from './jobs';
-import { infoRoute } from './routes/info';
+import { bullRoute } from './routes/bull-adapter';
+
+export const validate: FastifyBasicAuthOptions['validate'] = async (username, password) => {
+  const key = process.env.WEB_UI_PASSWORD;
+  if (!key) return Promise.resolve();
+  if (password !== key) {
+    throw new Error('Invalid password.');
+  }
+  return Promise.resolve();
+};
 
 export const api = async () => {
-  const config = validateConfig();
-  logConfig(config);
-
-  const server = Fastify();
+  const server = Fastify({ logger });
+  await server.register(BasicAuth, { validate });
   server.setErrorHandler((err, req, reply) => {
     logger.error(err);
     if (err instanceof Error) {
-      console.error(err.stack);
-      void reply.status(500).send({ error: err.message });
+      logger.error(err.stack);
+      void reply.status(500).send({ status: 'error' });
       return;
     }
     void reply.status(500).send({ status: 'error' });
     return;
   });
-  const redis = createRedisClient();
-  server.decorate('redis', redis);
-  await server.register(fastifySchedulePlugin);
-  const job = processJob(redis);
-  server.scheduler.addSimpleIntervalJob(job);
-  // server.addHook('onClose', async (fastify, done) => {
-  //   await redis.disconnect();
-  //   done();
-  // });
 
-  await server.register(processRoute);
-  await server.register(flushRoute);
-  await server.register(infoRoute);
+  await server.register(bullRoute().registerPlugin());
 
   return server;
 };
