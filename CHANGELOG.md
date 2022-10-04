@@ -1,5 +1,42 @@
 # magic-supplier
 
+## 1.3.0
+
+### Minor Changes
+
+- dc465e5: Fixed an issue when redeeming an inbound HTLC when the BTC prevout index was non-zero
+
+### Patch Changes
+
+- a632272: Adds script for updating fees
+
+## 1.2.4
+
+### Patch Changes
+
+- 09d8c13: Adds scripts for adding xBTC funds and revoking expired outbound swaps
+- 09d8c13: Added better logging and logic to "finalize outbound swap" processor
+
+## 1.2.3
+
+### Patch Changes
+
+- 929337c: Fixes fee estimation math
+- 929337c: Throw full error when unable to redeem inbound
+
+## 1.2.2
+
+### Patch Changes
+
+- 0c1f977: Fix to fetch transactions with unanchored state when processing events
+- 0c1f977: Fixed a network-config issue when redeeming inbound HTLC
+
+## 1.2.1
+
+### Patch Changes
+
+- 6583be1: Updates mainnet contract address
+
 ## 1.2.0
 
 ### Minor Changes
