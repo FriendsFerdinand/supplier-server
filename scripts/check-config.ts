@@ -15,15 +15,15 @@ import { getBalances } from '../src/wallet';
 
 async function run() {
   try {
-    // if (hasSupplierId()) {
-    //   const config = validateConfig();
-    //   logConfig(config);
-    //   await validateKeysMatch();
-    // } else {
-    //   const config = validateKeys();
-    //   logConfig(config);
-    //   logger.debug('No SUPPLIER_ID - skipping supplier registration check.');
-    // }
+    if (hasSupplierId()) {
+      const config = validateConfig();
+      logConfig(config);
+      await validateKeysMatch();
+    } else {
+      const config = validateKeys();
+      logConfig(config);
+      logger.debug('No SUPPLIER_ID - skipping supplier registration check.');
+    }
     const contracts = getContracts();
     logger.debug(
       {

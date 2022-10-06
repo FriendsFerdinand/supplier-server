@@ -65,7 +65,8 @@ export function getStxNetworkVersion() {
 
 export function getStxAddress() {
   const networkVersion = getStxNetworkVersion();
-  return makeStxAddress(getStxPrivateKey(), networkVersion);
+  // return makeStxAddress(getStxPrivateKey(), networkVersion);
+  return "ST11WX7SEVYPQEB1PZTWM0K5FYSMW1CFGHPE4DYA3.supplier-interface"
 }
 
 export function getNetworkKey() {
