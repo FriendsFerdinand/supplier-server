@@ -3,6 +3,7 @@ import {
   getNetworkKey,
   hasSupplierId,
   logConfig,
+  getPublicKey,
   validateConfig,
   validateKeys,
   validateKeysMatch,
@@ -11,17 +12,18 @@ import { getContracts } from '../src/stacks';
 import { logger } from '../src/logger';
 import { getBalances } from '../src/wallet';
 
+
 async function run() {
   try {
-    if (hasSupplierId()) {
-      const config = validateConfig();
-      logConfig(config);
-      await validateKeysMatch();
-    } else {
-      const config = validateKeys();
-      logConfig(config);
-      logger.debug('No SUPPLIER_ID - skipping supplier registration check.');
-    }
+    // if (hasSupplierId()) {
+    //   const config = validateConfig();
+    //   logConfig(config);
+    //   await validateKeysMatch();
+    // } else {
+    //   const config = validateKeys();
+    //   logConfig(config);
+    //   logger.debug('No SUPPLIER_ID - skipping supplier registration check.');
+    // }
     const contracts = getContracts();
     logger.debug(
       {
@@ -37,6 +39,7 @@ async function run() {
       stx: balances.stx.stx,
       xbtcFunds: balances.xbtc.xbtc,
       xbtcExternal: balances.stx.xbtc,
+      // publicKey: Buffer.from(getPublicKey()).toString("hex"),
     });
   } catch (error) {
     logger.error(error);
